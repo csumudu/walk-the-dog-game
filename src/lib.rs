@@ -1,3 +1,9 @@
+use futures::channel::oneshot;
+use futures::future::{Either, FutureExt};
+use futures::{future, select};
+use std::rc::Rc;
+use std::sync::Mutex;
+
 use rand::thread_rng;
 use rand::Rng;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -59,12 +65,7 @@ pub fn main_js() -> Result<(), JsValue> {
         .dyn_into::<CanvasRenderingContext2d>()
         .unwrap();
 
-    // Your code goes here!
-    console::log_1(&JsValue::from_str("Hello world!"));
-
-    /**
-     * Draw Squre
-     */
+    // Draw Squre
     let p = Point { x: 100.0, y: 100.0 };
     let size = &Size {
         width: 200.0,
@@ -75,27 +76,39 @@ pub fn main_js() -> Result<(), JsValue> {
     let contex2 = context.clone();
     draw_squre(&contex2, &p, &size, &color);
 
-    /**
-     * Draw Image
-     */
+    //* Draw Image
     wasm_bindgen_futures::spawn_local(async move {
-        let (sender, reciver) = futures::channel::oneshot::channel::<()>();
+        let (success_sender, success_receiver) =
+            futures::channel::oneshot::channel::<Result<(), JsValue>>();
+        let (error_sender, error_receiver) =
+            futures::channel::oneshot::channel::<Result<(), JsValue>>();
 
         let image = HtmlImageElement::new().unwrap();
 
-        let callback = Closure::once(|| {
-            console::log_1(&JsValue::from_str("Image Loaded to the Canvas!"));
-            sender.send(());
+        let success_callback = Closure::once(move || {
+            success_sender.send(Ok(()));
         });
 
-        image.set_onload(Some(callback.as_ref().unchecked_ref()));
-        callback.forget();
+        let error_callback = Closure::once(move |error| {
+            console::log_1(&JsValue::from_str("ERROE:: Image Loaded Faliure"));
+            error_sender.send(Err(error));
+        });
+
+        image.set_onload(Some(success_callback.as_ref().unchecked_ref()));
+        image.set_onerror(Some(error_callback.as_ref().unchecked_ref()));
 
         image.set_src("images/boy_idle_1.png");
 
-        reciver.await;
+        let result = select! {
+            res = success_receiver.fuse() => res,
+            res = error_receiver.fuse() => res,
+        };
+
         context.draw_image_with_html_image_element(&image, 0.0, 0.0);
+        console::log_1(&JsValue::from_str("Last Line in Future-------->"));
     });
+
+    console::log_1(&JsValue::from_str("Last Line -------->"));
 
     Ok(())
 }
