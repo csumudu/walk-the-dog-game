@@ -1,3 +1,7 @@
+use std::error;
+use std::rc::Rc;
+use std::sync::Mutex;
+
 use rand::thread_rng;
 use rand::Rng;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -79,23 +83,39 @@ pub fn main_js() -> Result<(), JsValue> {
      * Draw Image
      */
     wasm_bindgen_futures::spawn_local(async move {
-        let (sender, reciver) = futures::channel::oneshot::channel::<()>();
+        let (sender, reciver) = futures::channel::oneshot::channel::<Result<(), JsValue>>();
+
+        let success_sender = Rc::new(Mutex::new(Some(sender)));
+        let error_sender = Rc::clone(&success_sender);
 
         let image = HtmlImageElement::new().unwrap();
 
-        let callback = Closure::once(|| {
+        let success_callback = Closure::once(move || {
             console::log_1(&JsValue::from_str("Image Loaded to the Canvas!"));
-            sender.send(());
+            if let Some(x) = success_sender.lock().ok().and_then(|mut f| f.take()) {
+                x.send(Ok(()));
+            };
         });
 
-        image.set_onload(Some(callback.as_ref().unchecked_ref()));
-        callback.forget();
+        let error_callback = Closure::once(move |err| {
+            console::log_1(&JsValue::from_str("Image Loaded Faliure!!!!!"));
+            if let Some(es) = error_sender.lock().ok().and_then(|mut x|x.take()){
+                es.send(Err(err));
+            };
+        });
+
+        image.set_onload(Some(success_callback.as_ref().unchecked_ref()));
+        image.set_onerror(Some(error_callback.as_ref().unchecked_ref()));
 
         image.set_src("images/boy_idle_1.png");
 
         reciver.await;
         context.draw_image_with_html_image_element(&image, 0.0, 0.0);
+
+        console::log_1(&JsValue::from_str("Last Line in thread"));
     });
+
+    console::log_1(&JsValue::from_str("End Main"));
 
     Ok(())
 }
